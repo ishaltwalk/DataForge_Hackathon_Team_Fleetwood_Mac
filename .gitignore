@@ -1,5 +1,5 @@
 # ==========================
-# Secrets & environment
+# Secrets & Environment
 # ==========================
 .env
 .env.*
@@ -10,44 +10,49 @@ secrets/
 credentials.json
 
 # ==========================
-# Node / JS / TS
+# Python & Bytecode
 # ==========================
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-.pnpm-store/
-dist/
-build/
-.next/
-out/
-.turbo/
-.vite/
-*.tsbuildinfo
-.eslintcache
-
-# ==========================
-# Python
-# ==========================
-__pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
-*.egg-info/
-.eggs/
+*.so
 .Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
 env/
 venv/
 .venv/
 ENV/
+env.bak/
+venv.bak/
+
+# Testing, typing & linters
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-*.egg
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
 
 # ==========================
-# Audio / media artifacts
-# (generated TTS clips, test fixtures output, recordings)
+# Audio / Media Artifacts
 # ==========================
 *.wav
 *.mp3
@@ -56,28 +61,41 @@ ENV/
 *.flac
 *.m4a
 *.mulaw
-/audio_output/
-/generated_clips/
-/recordings/
-!/fixtures/**/*.wav
-!/fixtures/**/*.mp3
+audio_output/
+generated_clips/
+recordings/
+# Exception: keep test fixtures if needed
+!fixtures/**/*.wav
+!fixtures/**/*.mp3
 
 # ==========================
-# Logs & debug
+# Node / Frontend
+# ==========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+.next/
+out/
+.turbo/
+.vite/
+*.tsbuildinfo
+.eslintcache
+
+# ==========================
+# Logs & System Cache
 # ==========================
 *.log
 logs/
 .cache/
-
-# ==========================
-# OS files
-# ==========================
 .DS_Store
 Thumbs.db
 desktop.ini
 
 # ==========================
-# IDE / editor
+# IDEs & Editors
 # ==========================
 .vscode/
 .idea/
@@ -85,7 +103,7 @@ desktop.ini
 *.swo
 
 # ==========================
-# Misc
+# Temporary Files
 # ==========================
 *.tmp
 *.bak
