@@ -194,3 +194,13 @@ word chosen in advance. It cannot tell you what an open-ended utterance said.
 
 The active speech provider and correction mode are shown in the app header, so
 which path is running is observable rather than assumed.
+
+**Windows also needs UTF-8 mode.** Without it, panphon cannot read its own IPA
+feature tables and every import fails with
+`UnicodeDecodeError: 'charmap' codec can't decode byte 0x90`:
+
+    $env:PYTHONUTF8="1"
+
+Permanently:
+
+    [Environment]::SetEnvironmentVariable("PYTHONUTF8","1","User")
