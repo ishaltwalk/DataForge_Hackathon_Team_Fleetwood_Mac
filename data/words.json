@@ -1,0 +1,241 @@
+[
+  {
+    "id": "thoroughly",
+    "display": "thoroughly",
+    "ipa_syllables": [
+      [
+        "θ",
+        "ʌ"
+      ],
+      [
+        "ɹ",
+        "o",
+        "ʊ"
+      ],
+      [
+        "l",
+        "i"
+      ]
+    ],
+    "rpa_syllables": [],
+    "trap": "th vs s",
+    "syllable_count": 3
+  },
+  {
+    "id": "something",
+    "display": "something",
+    "ipa_syllables": [
+      [
+        "s",
+        "ʌ",
+        "m"
+      ],
+      [
+        "θ",
+        "ɪ",
+        "ŋ"
+      ]
+    ],
+    "rpa_syllables": [],
+    "trap": "th vs t or f",
+    "syllable_count": 2
+  },
+  {
+    "id": "strengthen",
+    "display": "strengthen",
+    "ipa_syllables": [
+      [
+        "s",
+        "t",
+        "ɹ",
+        "ɛ",
+        "ŋ"
+      ],
+      [
+        "θ",
+        "ə",
+        "n"
+      ]
+    ],
+    "rpa_syllables": [],
+    "trap": "th after a cluster",
+    "syllable_count": 2
+  },
+  {
+    "id": "authority",
+    "display": "authority",
+    "ipa_syllables": [
+      [
+        "ɐ"
+      ],
+      [
+        "θ",
+        "ɔː"
+      ],
+      [
+        "ɹ",
+        "ɪ"
+      ],
+      [
+        "ɾ",
+        "i"
+      ]
+    ],
+    "rpa_syllables": [],
+    "trap": "th vs t, plus long vowel",
+    "syllable_count": 4
+  },
+  {
+    "id": "parallel",
+    "display": "parallel",
+    "ipa_syllables": [
+      [
+        "p",
+        "æ"
+      ],
+      [
+        "ɹ",
+        "ə"
+      ],
+      [
+        "l",
+        "ɛ",
+        "l"
+      ]
+    ],
+    "rpa_syllables": [],
+    "trap": "r vs l, twice",
+    "syllable_count": 3
+  },
+  {
+    "id": "vulnerable",
+    "display": "vulnerable",
+    "ipa_syllables": [
+      [
+        "v",
+        "ʌ",
+        "l"
+      ],
+      [
+        "n",
+        "ɹ",
+        "ə"
+      ],
+      [
+        "b",
+        "ə",
+        "l"
+      ]
+    ],
+    "rpa_syllables": [],
+    "trap": "v vs w, plus r and l",
+    "syllable_count": 3
+  },
+  {
+    "id": "available",
+    "display": "available",
+    "ipa_syllables": [
+      [
+        "ɐ"
+      ],
+      [
+        "v",
+        "e",
+        "ɪ"
+      ],
+      [
+        "l",
+        "ə"
+      ],
+      [
+        "b",
+        "ə",
+        "l"
+      ]
+    ],
+    "rpa_syllables": [],
+    "trap": "v vs w",
+    "syllable_count": 4
+  },
+  {
+    "id": "statistics",
+    "display": "statistics",
+    "ipa_syllables": [
+      [
+        "s",
+        "t",
+        "ɐ"
+      ],
+      [
+        "t",
+        "ɪ",
+        "s"
+      ],
+      [
+        "t",
+        "ɪ",
+        "k",
+        "s"
+      ]
+    ],
+    "rpa_syllables": [],
+    "trap": "st cluster, repeated",
+    "syllable_count": 3
+  },
+  {
+    "id": "specifically",
+    "display": "specifically",
+    "ipa_syllables": [
+      [
+        "s",
+        "p",
+        "ə"
+      ],
+      [
+        "s",
+        "ɪ"
+      ],
+      [
+        "f",
+        "ɪ"
+      ],
+      [
+        "k",
+        "l",
+        "i"
+      ]
+    ],
+    "rpa_syllables": [],
+    "trap": "sp cluster, unstressed syllables",
+    "syllable_count": 4
+  },
+  {
+    "id": "environment",
+    "display": "environment",
+    "ipa_syllables": [
+      [
+        "ɛ",
+        "n"
+      ],
+      [
+        "v",
+        "a",
+        "ɪ"
+      ],
+      [
+        "ɹ",
+        "ə",
+        "n"
+      ],
+      [
+        "m",
+        "ə",
+        "n",
+        "t"
+      ]
+    ],
+    "rpa_syllables": [],
+    "trap": "v vs w, plus r",
+    "syllable_count": 4
+  }
+]

@@ -1,0 +1,11 @@
+streamlit>=1.40
+torch
+transformers
+librosa
+soundfile
+phonemizer
+panphon
+python-dotenv
+requests
+numpy
+pytest

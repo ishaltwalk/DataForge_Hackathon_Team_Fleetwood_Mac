@@ -109,3 +109,5 @@ desktop.ini
 *.bak
 coverage/
 .nyc_output/
+*.wav
+!evidence/clips/**
