@@ -44,12 +44,65 @@ _ALIAS = {
     ":": "\u02d0",   # ASCII colon used as a length mark
 }
 
+# SYMBOLS PANPHON SILENTLY DROPS. This is the important table in this file.
+#
+# panphon's ipa_segs() does not raise on a symbol it does not know, it returns
+# nothing for it. espeak emits several such symbols constantly in American
+# English, so a phone just vanishes and the shortened sequence looks perfectly
+# valid downstream:
+#
+#     government -> u0261u028Cvu025Anmu0259nt   becomes  u0261u028Cvnmu0259nt
+#     sovereign  -> su0251u02D0vu025Au0279u026An    becomes  su0251u02D0vu0279u026An
+#     choir      -> kwau026Au025A        becomes  kwau026A
+#     axes       -> u00E6ksu1D7Bz        becomes  u00E6ksz
+#
+# Two consequences, both bad. A reference missing a vowel penalises a learner
+# who says the word correctly. And an audit that counts syllables to catch
+# espeak's mistakes ends up blaming espeak for this code's own data loss.
+#
+# Measured by running espeak over 8000 words and testing every distinct symbol
+# it produced against ipa_segs.
+_DECOMPOSE = {
+    "\u025a": "\u0259\u0279",   # r-coloured schwa -> schwa + rhotic
+    "\u1d7b": "\u026a",       # reduced barred i -> small capital i
+    "\u02b2": "j",        # palatalization -> yod
+}
+
+# Dropped on purpose rather than by accident: these carry no distinction the
+# scorer uses. Listed so the guard below does not flag them.
+_INTENTIONAL = "\u0303\u0329"      # nasalization, syllabic marker
+
+# Anything that still disappears during segmentation lands here. Check it after
+# a run rather than trusting that the table above is complete.
+LOST_SYMBOLS: set[str] = set()
+
 LENGTH_MARK = "\u02d0"
 
 
 def segment(s: str) -> list[str]:
-    """Split an IPA string into phone segments, keeping length marks attached."""
+    """Split an IPA string into phone segments, keeping length marks attached.
+
+    Decomposes the symbols panphon cannot parse before segmenting, and records
+    anything that still goes missing in LOST_SYMBOLS instead of losing it
+    silently.
+    """
+    for bad, good in _DECOMPOSE.items():
+        s = s.replace(bad, good)
+    for ch in _INTENTIONAL:
+        s = s.replace(ch, "")
+    # Decomposing u025A to u0259u0279 next to an existing rhotic gives a doubled u0279u0279
+    # (sovereign, asterisk, vulnerable). English has no geminate rhotic, so
+    # collapse it rather than scoring against a phone nobody says.
+    while "\u0279\u0279" in s:
+        s = s.replace("\u0279\u0279", "\u0279")
+
     segs = _ft.ipa_segs(s)
+
+    if "".join(segs) != s:
+        kept = "".join(segs)
+        for ch in s:
+            if ch not in kept:
+                LOST_SYMBOLS.add(ch)
     if not segs:
         return []
 

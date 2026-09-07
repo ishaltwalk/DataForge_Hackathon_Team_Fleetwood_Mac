@@ -9,3 +9,7 @@ python-dotenv
 requests
 numpy
 pytest
+
+cmudict
+wordfreq
+english-words
