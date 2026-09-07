@@ -111,3 +111,5 @@ coverage/
 .nyc_output/
 *.wav
 !evidence/clips/**
+
+.venv/
