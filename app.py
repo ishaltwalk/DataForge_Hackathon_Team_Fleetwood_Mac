@@ -1,8 +1,11 @@
-"""Pronunciation coach.
+"""Pronunciation coach, Streamlit build.
 
-Deliberately small. The brief warns against building a real-time duplex agent
-for this track, and nothing here needs interruption handling: the user records,
-gets scored, hears a correction, tries again.
+A second front end over the same core, kept because it is the fastest way to
+reproduce a scoring result without a browser, and judges asked to reproduce
+behaviour will reach for it. It renders core.coach.take_turn and decides
+nothing on its own; if this file and the React app ever disagree about which
+syllable was wrong, that is a bug in one of the two renderers, not a
+difference of opinion between two pipelines.
 
 Two things on screen are requirements rather than decoration:
 
@@ -16,19 +19,19 @@ Run:  streamlit run app.py
 import json
 from pathlib import Path
 
-import streamlit as st
+from dotenv import load_dotenv
 
-from core import correct, session
-from core.align import describe
-from core.score import SYL_THRESHOLD, score, validate_bank
+load_dotenv()
+
+import streamlit as st  # noqa: E402
+
+from core import coach, session  # noqa: E402
+from core.score import validate_bank  # noqa: E402
+from core.speech import CONFIG_LINE  # noqa: E402
 
 BANK_PATH = Path(__file__).parent / "data" / "words.json"
 
-MODEL_ID = "mistv3"
-SPEAKER = "falcon"
-LANGUAGE = "eng"
-
-st.set_page_config(page_title="Pronunciation coach", page_icon="🗣")
+st.set_page_config(page_title="Pronunciation coach", page_icon="\N{SPEAKING HEAD IN SILHOUETTE}")
 
 
 @st.cache_resource
@@ -42,37 +45,37 @@ def warm_asr():
 
 @st.cache_data
 def load_bank():
-    bank = json.loads(BANK_PATH.read_text())
+    bank = json.loads(BANK_PATH.read_text(encoding="utf-8"))
     validate_bank(bank)
     return bank
 
 
-def speak(**kwargs):
-    """Route to the Rime module, reporting which provider actually answered."""
-    from rime_tts.synthesize import synthesize
-
-    audio = synthesize(
-        kwargs["text"],
-        speaker=SPEAKER,
-        phonemize_brackets=kwargs.get("phonemize_brackets", False),
-        pause_brackets=kwargs.get("pause_brackets", False),
-        inline_speed=kwargs.get("inline_speed"),
-    )
-    return audio
+def play(spoken, label):
+    """Audio if Rime answered, a disclosed failure if it did not. Never a
+    silent substitution: see core/speech.py."""
+    if spoken is None:
+        return
+    if spoken.ok:
+        st.audio(spoken.audio, format="audio/wav")
+        st.caption(f"{label} - provider: {spoken.provider}")
+    else:
+        st.error(f"{label} unavailable. Provider: {spoken.provider}. {spoken.reason}")
 
 
 bank = load_bank()
 by_id = {e["id"]: e for e in bank}
 
 st.title("Pronunciation coach")
-st.caption(
-    f"Speech: Rime {MODEL_ID} / {SPEAKER} / {LANGUAGE} · "
-    f"correction mode: {'syllable isolation' if correct.NEST_SPEED_IN_PHONEME else 'whole word'}"
-)
+st.caption(f"Speech: {CONFIG_LINE}")
 
-word_id = st.selectbox(
-    "Word", [e["id"] for e in bank], format_func=lambda w: by_id[w]["display"]
-)
+# 5000 entries in a selectbox is slow and unusable. Filter first.
+query = st.text_input("Find a word", "")
+ids = [e["id"] for e in bank if query.lower() in e["id"]][:200]
+if not ids:
+    st.warning("No word matches that.")
+    st.stop()
+
+word_id = st.selectbox("Word", ids, format_func=lambda w: by_id[w]["display"])
 entry = by_id[word_id]
 
 if st.session_state.get("word") != word_id:
@@ -84,51 +87,42 @@ sess = st.session_state["session"]
 st.write(f"Trap: {entry['trap']}")
 
 if st.button("Hear it"):
-    st.audio(speak(**correct.build_prompt(entry)), format="audio/wav")
+    play(coach.prompt(entry), "Model pronunciation")
 
 clip = st.audio_input("Now say it")
 
 if clip is not None and st.button("Score my attempt"):
     asr = warm_asr()
     heard = asr.transcribe_bytes(clip.getvalue())
-    result = score(entry, heard)
-    state = sess.submit(result)
+    turn = coach.take_turn(entry, heard, sess)
 
-    if state == "no_speech":
+    if turn.state == "no_speech":
         st.warning("I did not hear anything. Check the mic and try again.")
     else:
-        st.metric("Score", result["score"])
-
-        # Which syllables to flag, decided once and reused for both the on
-        # screen highlight and the spoken correction. Computing them
-        # separately is how the two drift apart and the app highlights one
-        # syllable while Rime enunciates another.
-        wrong = (set() if result["passed"]
-                 else correct.wrong_syllables(result["syllable_costs"], SYL_THRESHOLD))
+        st.metric("Score", turn.result["score"])
 
         cols = st.columns(len(entry["ipa_syllables"]))
         for i, (col, syl) in enumerate(zip(cols, entry["ipa_syllables"])):
             text = "".join(syl)
-            if i in wrong:
-                col.error(text)
-            else:
-                col.success(text)
+            (col.error if i in turn.wrong else col.success)(text)
 
         with st.expander("Phone-level diff"):
-            st.code(describe(result["ops"]))
+            st.code(turn.diff)
 
-        if state == "pass":
+        if turn.state == "pass":
             st.success("That one is right. Pick another word.")
-        elif state == "give_up":
+            st.session_state["session"] = session.Session(entry)
+        elif turn.state == "give_up":
             st.info("Let's move on. Here it is once more at normal speed.")
-            st.audio(speak(**correct.build_prompt(entry)), format="audio/wav")
+            play(turn.spoken, "Model pronunciation")
+            st.session_state["session"] = session.Session(entry)
         else:
-            if sess.moved_on() and sess.attempts > 1:
+            if turn.changed_syllable:
                 st.caption("Different syllable this time.")
-            payload = correct.build_correction(entry, wrong)
-            st.caption(correct.coaching_line(entry, wrong))
-            st.audio(speak(**payload), format="audio/wav")
+            if turn.coaching:
+                st.caption(turn.coaching)
+            play(turn.spoken, "Correction")
 
 if sess.attempts:
     st.divider()
-    st.caption(f"Attempts on this word: {sess.attempts}")
+    st.caption(f"Attempts on this word: {sess.attempts} of {sess.max_attempts}")

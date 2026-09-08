@@ -2,7 +2,8 @@
 
 A learner picks a word with a known trap sound. Rime says it. They say it back.
 The system identifies **which syllable** was wrong, and Rime re-speaks the word
-with that syllable isolated by a pause and slowed down. Repeat until correct.
+with that syllable slowed down while the rest stays at normal speed. Repeat
+until correct.
 
 Built for DataForge x Rime. Team Fleetwood Mac.
 
@@ -19,9 +20,15 @@ Removing speech does not degrade this product, it removes it.
 2. **Rime specifically, not TTS generally.** `phonemizeBetweenBrackets`
    guarantees the model says the phoneme we specify rather than its own G2P
    guess, which matters because half the word bank is out of Rime's dictionary.
-   `pauseBetweenBrackets` isolates one syllable inside a single word.
-   `inlineSpeedAlpha` slows that chunk without slowing the sentence around it.
-   Remove those three controls and the corrective loop has nothing to say.
+   `inlineSpeedAlpha` slows one syllable without slowing the word around it,
+   which is the whole correction: the learner hears the same word, at the same
+   pace, with one part stretched. Remove those controls and the corrective
+   loop has nothing to say.
+
+   `pauseBetweenBrackets` is supported in `rime_tts/synthesize.py` and is NOT
+   used in the judged flow. It was tested at several gap values and made the
+   correction sound worse, not clearer, so it was dropped rather than tuned.
+   See the revision note at the top of `core/correct.py`.
 3. **A second Rime endpoint does structural work.** `/phonemize` builds the
    reference library that the correction is generated from. It is not a
    playback call at the end of somebody else's pipeline.
@@ -120,11 +127,28 @@ Verify:
 python -c "from core.g2p import espeak_phones; print(espeak_phones('thoroughly'))"
 ```
 
-Run:
+### Run the web app (the judged flow)
+
+Two processes.
+
+```bash
+python server.py     # terminal 1, scoring API on :8000
+npm install          # terminal 2, first time only
+npm run dev          # vite on :5173, proxies /api to :8000
+```
+
+Open `http://localhost:5173`. `server.py` loads the ASR model before it opens
+the port, so the first start takes a minute and the first scored word does not.
+
+### Run the Streamlit app (same core, no browser)
 
 ```bash
 streamlit run app.py
 ```
+
+Both front ends call `core/coach.py` and nothing else. They render the same
+`Turn`; neither one decides which syllable was wrong. If they ever disagree,
+one of the two renderers is broken, not the pipeline.
 
 First run downloads about 1.2 GB of ASR model weights.
 
@@ -133,7 +157,7 @@ First run downloads about 1.2 GB of ASR model weights.
 ## Reproducing the claims
 
 ```bash
-pytest tests/                      # scoring unit tests, no audio needed
+pytest                             # 39 unit tests, no audio and no network
 python tests/acceptance.py         # full pipeline against committed clips
 python scripts/calibrate.py        # regenerates evidence/calibration.md
 ```
@@ -204,3 +228,59 @@ feature tables and every import fails with
 Permanently:
 
     [Environment]::SetEnvironmentVariable("PYTHONUTF8","1","User")
+
+---
+
+## Architecture, web app
+
+```
+  browser                              server.py (:8000)
+  --------                             -----------------
+  MediaRecorder  webm/opus
+        |
+        v  decodeAudioData + OfflineAudioContext
+  16 kHz mono PCM WAV   ---- POST /api/attempt ---->  core/asr.py
+        |                                                  |
+        |                                            core/coach.py
+        |                                             take_turn()
+        |                                                  |
+        |                                    score -> wrong syllables
+        |                                          -> Rime payload
+        |                                                  |
+   <---- { state, wrongSyllables, audioUrl, provider } <----
+        |
+   highlight the syllables the server named
+   play the wav the server returned
+```
+
+**Why the browser converts the audio.** The recorder used to upload raw
+webm/opus. `librosa` opens WAV and FLAC through `soundfile` and needs an
+external `ffmpeg` for anything else, so on a machine without ffmpeg every
+attempt failed to decode, and on a machine with it the pipeline silently
+depended on an undeclared binary. The browser already has an Opus decoder and
+a resampler, so the conversion to the exact 16 kHz mono the model wants
+happens there. `src/lib/recorder.js`.
+
+**Why the word bank is not bundled.** `data/words.json` is 3.3 MB. The front
+end imported it directly, which shipped the whole bank on first paint and, more
+dangerously, gave the browser a second copy that could drift from the one the
+server scores against. `/api/words` filters server side; `/api/words/<id>`
+returns one entry. The `rpa_syllables` are never sent to the browser at all,
+because a correction that can be read is a correction that did not need voice.
+
+## Known limitations
+
+* Sessions are in-memory and capped at 500, keyed by `(client_id, word_id)`.
+  Restarting the server clears every attempt counter. Fine for a demo, not a
+  product.
+* Single word utterances only. Nothing here handles connected speech,
+  co-articulation across word boundaries, or sentence prosody.
+* American English only. The reference is espeak `en-us` and the trap list was
+  built against it.
+* The ASR runs on CPU by default. On a laptop expect roughly a second per
+  attempt after warm-up, which is inside the loop's tolerance but is not a
+  latency claim and is not measured as one.
+* Fallback behaviour: if Rime fails the app says so and offers the browser
+  voice, clearly labelled as degraded. The browser voice reads the plain word
+  and guesses at it, which for this word bank may reproduce the exact
+  mispronunciation being corrected. It is never selected automatically.

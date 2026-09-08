@@ -1,8 +1,8 @@
 import json
-import os
 import urllib.request
 
-RIME_API_KEY = os.environ["RIME_API_KEY"]
+from rime_tts.synthesize import api_key
+
 PHONEMIZE_URL = "https://optimize.rime.ai/phonemize"
 
 #only for clean audio, not for input audio
@@ -12,7 +12,7 @@ def phonemize(audio_path: str) -> str:
 
 #check format of audio
     headers = {
-        "Authorization": f"Bearer {RIME_API_KEY}",
+        "Authorization": f"Bearer {api_key()}",
         "Content-Type": "audio/wav"
     }
 

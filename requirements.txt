@@ -1,15 +1,22 @@
+# Runtime
 streamlit>=1.40
+flask>=3.0
+flask-cors>=4.0
+python-dotenv
 torch
 transformers
 librosa
 soundfile
+numpy
+
+# Reference building (offline, scripts/ only)
 phonemizer
 panphon
-python-dotenv
-requests
-numpy
-pytest
 
+# Word bank construction (offline, scripts/build_wordbank.py only)
 cmudict
 wordfreq
 english-words
+
+# Tests
+pytest

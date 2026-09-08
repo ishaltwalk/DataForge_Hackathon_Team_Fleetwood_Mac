@@ -157,3 +157,27 @@ Telephony transport is not tested and is not claimed.
 **Scoring thresholds are calibrated on a small labelled sample** from a small
 number of speakers. Treat the specific threshold values as exploratory. The
 method for setting them is the reproducible part, not the numbers.
+
+---
+
+## Appendix: repeatable checks that need no audio and no network
+
+Added when the two branches were merged. These do not replace the clip-based
+acceptance test above; they cover the failures that a good clip hides.
+
+```bash
+pytest                             # 39 tests, offline
+```
+
+| Test | What it protects |
+|---|---|
+| `tests/test_coach.py::test_highlighted_syllables_are_the_spoken_ones` | Pulls the bracketed chunk indices back out of the text actually sent to Rime and asserts they equal the set the UI was told to highlight. This is the failure the whole design is arranged around: highlighting one syllable while Rime enunciates another looks correct in code review and is obvious to anyone wearing headphones. |
+| `tests/test_payload.py::test_one_speed_value_per_bracketed_span` | `inlineSpeedAlpha` takes one value per bracketed span. Sending a single value leaves every span after the first at full speed, so a badly mispronounced word, where most syllables get flagged, silently stops being slowed. |
+| `tests/test_payload.py::test_brackets_force_phonemization_even_if_caller_forgets` | `phonemizeBetweenBrackets` is set whenever `{}` appears, not only when a caller remembers to ask. Without it Rime speaks the literal braces or falls back to its own G2P guess, which is the guess this product exists to remove. |
+| `tests/test_coach.py::test_provider_failure_is_reported_not_swallowed` | A Rime outage produces `provider: "unavailable"` with a reason, never a silent substitution. |
+
+**Correction shape, for the record.** One wrong syllable in `culture`
+(`k1AlC` + `0xr`) produces `{k1AlC}-[{0xr}]` with `inlineSpeedAlpha=1.3`. Both
+wrong produces `[{k1AlC}]-[{0xr}]` with `inlineSpeedAlpha=1.3,1.3`. The `-` is
+required syntax for multi-chunk RPA, not a pause. `pauseBetweenBrackets` is
+implemented but unused; it was tested and made the correction less clear.

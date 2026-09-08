@@ -39,7 +39,22 @@ WRONG_NAME = re.compile(r"^(?P<word>[^_]+)__(?P<syl>\d+)\.wav$")
 
 def run():
     from core.asr import transcribe
-    from core.score import score, validate_bank
+    from core.correct import wrong_syllables
+    from core.score import SYL_THRESHOLD, score, validate_bank
+
+    def blamed(result):
+        """The syllables the LEARNER was actually told about.
+
+        This used to read result["worst_syllable"], which is the argmax and
+        not what the product does. The app highlights, and Rime slows, the
+        threshold set from core.correct.wrong_syllables. Those two disagree
+        whenever a second syllable is also over threshold, so the old
+        assertion could pass while the user heard something else corrected.
+        Assert on what shipped.
+        """
+        if result["passed"]:
+            return set()
+        return wrong_syllables(result["syllable_costs"], SYL_THRESHOLD)
 
     bank = json.loads(BANK.read_text())
     validate_bank(bank)
@@ -65,10 +80,11 @@ def run():
             continue
         expected = int(m["syl"])
         r = score(by_id[m["word"]], transcribe(str(path)))
-        ok = (not r["passed"]) and r["worst_syllable"] == expected
+        flagged = blamed(r)
+        ok = (not r["passed"]) and expected in flagged
         failures += not ok
         rows.append((path.name, "wrong", f"fail, blame {expected}",
-                     f"{'fail' if not r['passed'] else 'pass'}, blame {r['worst_syllable']}",
+                     f"{'fail' if not r['passed'] else 'pass'}, blame {sorted(flagged)}",
                      r["score"], r["worst_syllable"], ok))
 
     # 3. Stress case: clean speech with background noise. Not a hard failure,

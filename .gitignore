@@ -113,3 +113,6 @@ coverage/
 !evidence/clips/**
 
 .venv/
+
+dist/
+.pytest_cache/
