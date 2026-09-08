@@ -51,6 +51,13 @@ def wrong_syllables(syllable_costs: list[float], threshold: float) -> set[int]:
     flagged = {i for i, cost in enumerate(syllable_costs) if cost > threshold}
     if flagged:
         return flagged
+    # Nothing exceeded the threshold. If nothing went wrong at all, say so
+    # instead of falling back to the highest cost: with an all-zero cost list
+    # (a perfect attempt, or silence, where score() returns zeros and
+    # worst_syllable None) the fallback picks index 0 and the learner is told
+    # to fix a syllable they got right, or one they never said.
+    if not any(cost > 0 for cost in syllable_costs):
+        return set()
     return {max(range(len(syllable_costs)), key=lambda i: syllable_costs[i])}
 
 
@@ -70,11 +77,19 @@ def build_correction(entry: dict, wrong_indices: set[int]) -> dict:
             chunk = "[" + chunk + "]"
         parts.append(chunk)
 
+    # inlineSpeedAlpha takes a comma-separated list, one value per BRACKETED
+    # span, not a single value for the whole utterance. Sending one value when
+    # several chunks are bracketed leaves every span after the first at normal
+    # speed, so on a badly mispronounced word (where most syllables get
+    # flagged) the correction silently stops slowing down.
+    n_bracketed = len(wrong_indices & set(range(len(chunks))))
+    speed = ",".join([INLINE_SPEED] * n_bracketed) if n_bracketed else None
+
     return {
         "text": "-".join(parts),
         "phonemize_brackets": True,
         "pause_brackets": False,
-        "inline_speed": INLINE_SPEED,
+        "inline_speed": speed,
     }
 
 

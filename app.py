@@ -20,7 +20,7 @@ import streamlit as st
 
 from core import correct, session
 from core.align import describe
-from core.score import score, validate_bank
+from core.score import SYL_THRESHOLD, score, validate_bank
 
 BANK_PATH = Path(__file__).parent / "data" / "words.json"
 
@@ -99,10 +99,17 @@ if clip is not None and st.button("Score my attempt"):
     else:
         st.metric("Score", result["score"])
 
+        # Which syllables to flag, decided once and reused for both the on
+        # screen highlight and the spoken correction. Computing them
+        # separately is how the two drift apart and the app highlights one
+        # syllable while Rime enunciates another.
+        wrong = (set() if result["passed"]
+                 else correct.wrong_syllables(result["syllable_costs"], SYL_THRESHOLD))
+
         cols = st.columns(len(entry["ipa_syllables"]))
         for i, (col, syl) in enumerate(zip(cols, entry["ipa_syllables"])):
             text = "".join(syl)
-            if i == result["worst_syllable"] and not result["passed"]:
+            if i in wrong:
                 col.error(text)
             else:
                 col.success(text)
@@ -118,9 +125,8 @@ if clip is not None and st.button("Score my attempt"):
         else:
             if sess.moved_on() and sess.attempts > 1:
                 st.caption("Different syllable this time.")
-            payload = correct.build_correction(
-                entry, result["worst_syllable"], sess.attempts
-            )
+            payload = correct.build_correction(entry, wrong)
+            st.caption(correct.coaching_line(entry, wrong))
             st.audio(speak(**payload), format="audio/wav")
 
 if sess.attempts:
