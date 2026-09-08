@@ -1,122 +1,103 @@
 """Turn "syllable 2 was wrong" into a Rime request.
 
-Owned by the Rime track. Written against the score() contract so it can be
-wired up the moment the scorer lands.
+Owned by the Rime track.
 
-The escalation matters. Replaying identical audio after a failed attempt
-teaches nothing, so each retry isolates the problem further:
+REVISION NOTE -- read this before touching the constants below.
 
-    attempt 1   whole word, correct phonemes, slightly slowed
-    attempt 2   syllables separated by pauses, the wrong one slowed
-    attempt 3+  the wrong syllable alone, then the whole word again
+The original design here escalated correction across three attempts (whole
+word slowed, syllables paused apart, isolated syllable alone) and flagged one
+open question: whether inlineSpeedAlpha's [] nests correctly around a
+phonemized {} chunk, since Rime's docs never demo the two together.
 
-Every correction goes out as speech. None of it is rendered as readable IPA on
-screen. That is deliberate: if the user could read the fix, removing the voice
-would leave the product intact, which is the thing the brief explicitly says is
-not enough.
+Both things got resolved by actually listening through Rime, not by reading
+the docs further:
 
+  * The nesting works. [{0xm}] correctly phonemizes AND slows just that
+    chunk. Confirmed live (agricultural, culture, picture -- see git history
+    around the RPA affricate fix for the specific test).
+  * <N> pauses between chunks make it sound worse, not clearer. Tested with
+    several gap values; dropped entirely rather than tuned.
 
-THE ONE UNVERIFIED ASSUMPTION
------------------------------
-Attempts 2 and 3 nest inlineSpeedAlpha's square brackets around custom
-pronunciation's curly braces: [{t0xm}]. Rime's docs demo the two features
-separately and never together, so this needs a live test before it is trusted:
+So the three-attempt escalation is gone. There's one correction shape now:
+every syllable plays as its own {rpa} chunk, '-' joins them (required syntax
+for multi-chunk RPA, not a pause -- see RIME_EVIDENCE.md), and whichever
+syllable(s) were actually wrong get [] around them so inlineSpeedAlpha slows
+only those. If every syllable was wrong, every chunk is bracketed -- that
+falls out of the same rule, it isn't a special case.
 
-    text: "{k1As}<300>[{t0xm}]"
-    phonemizeBetweenBrackets: true
-    pauseBetweenBrackets: true
-    inlineSpeedAlpha: "1.8"
+    {k1Ast}-[{0xm}]              one wrong syllable
+    [{k1Ast}]-[{0xm}]            both wrong
 
-If the pause works but the speed on the bracketed chunk is ignored, or the
-parser chokes, set NEST_SPEED_IN_PHONEME = False. The syllable isolation still
-works, the speed just applies to the whole utterance instead. Slightly less
-precise, still a working product. Record whichever branch shipped in the README
-under failure behavior, because disclosed fallbacks are allowed and undisclosed
-ones are not.
+Every correction still goes out as speech, never as readable IPA on screen.
+That's unchanged and non-negotiable -- see the brief's eligibility clause on
+what counts as voice actually being necessary.
 """
 
-# Flip to False if the [{ }] nesting test fails. See the docstring.
-NEST_SPEED_IN_PHONEME = True
-
-# Pause between isolated syllables, milliseconds. 300 is long enough to hear as
-# a break without sounding broken.
-SYLLABLE_PAUSE_MS = 300
-
-# Mist v3 treats values above 1.0 as slower. Rime's own guidance is to move up
-# gradually rather than jumping straight to an aggressive value, because
-# naturalness degrades before intelligibility does.
-SPEED_GENTLE = "1.4"
-SPEED_SLOW = "1.8"
-SPEED_SLOWEST = "2.0"
+INLINE_SPEED = "1.3"
 
 
-def _chunk(rpa: str, slow: bool) -> str:
-    if slow and NEST_SPEED_IN_PHONEME:
-        return "[{" + rpa + "}]"
-    return "{" + rpa + "}"
+def wrong_syllables(syllable_costs: list[float], threshold: float) -> set[int]:
+    """Which syllable indices exceed the per-syllable cost threshold.
+
+    Use the same threshold core/score.py uses to decide `passed`, so
+    "wrong enough to highlight" means the same thing in scoring and in the
+    correction it triggers.
+
+    Can return more than one index, or all of them. If none individually
+    clear the threshold but the caller already knows the attempt failed
+    overall, falls back to the single highest-cost syllable so the learner
+    still has something to listen for.
+    """
+    flagged = {i for i, cost in enumerate(syllable_costs) if cost > threshold}
+    if flagged:
+        return flagged
+    return {max(range(len(syllable_costs)), key=lambda i: syllable_costs[i])}
 
 
-def build_correction(entry: dict, worst_syllable: int, attempt: int) -> dict:
+def build_correction(entry: dict, wrong_indices: set[int]) -> dict:
     """Keyword arguments for the Rime synthesize() call.
 
     entry           a data/words.json record
-    worst_syllable  index from score(), or None when nothing was heard
-    attempt         1-based count of failed attempts so far
+    wrong_indices   syllable indices to bracket + slow, from wrong_syllables()
     """
     chunks = entry["rpa_syllables"]
     assert chunks, f"{entry['id']} has no RPA syllables"
 
-    if worst_syllable is None:
-        return {
-            "text": "I did not catch that. Listen again. {" + "".join(chunks) + "}",
-            "phonemize_brackets": True,
-            "pause_brackets": False,
-            "inline_speed": SPEED_GENTLE,
-        }
+    parts = []
+    for i, syl in enumerate(chunks):
+        chunk = "{" + syl + "}"
+        if i in wrong_indices:
+            chunk = "[" + chunk + "]"
+        parts.append(chunk)
 
-    if attempt <= 1:
-        # Whole word, correct phonemes guaranteed, gently slowed. Safe on every
-        # verified feature, so this is the fallback if anything else misbehaves.
-        return {
-            "text": "Listen again. {" + "".join(chunks) + "}",
-            "phonemize_brackets": True,
-            "pause_brackets": False,
-            "inline_speed": SPEED_GENTLE,
-        }
-
-    if attempt == 2:
-        parts = [_chunk(c, slow=(i == worst_syllable)) for i, c in enumerate(chunks)]
-        return {
-            "text": "Break it down. " + f"<{SYLLABLE_PAUSE_MS}>".join(parts),
-            "phonemize_brackets": True,
-            "pause_brackets": True,
-            "inline_speed": SPEED_SLOW,
-        }
-
-    bad = _chunk(chunks[worst_syllable], slow=True)
-    whole = "{" + "".join(chunks) + "}"
     return {
-        "text": f"Just this part. {bad}<400>Now the whole word. {whole}",
+        "text": "-".join(parts),
         "phonemize_brackets": True,
-        "pause_brackets": True,
-        "inline_speed": SPEED_SLOWEST,
+        "pause_brackets": False,
+        "inline_speed": INLINE_SPEED,
     }
 
 
 def build_prompt(entry: dict) -> dict:
-    """The model pronunciation played before the user's first attempt."""
+    """The model pronunciation played before the user's first attempt.
+
+    Nothing is bracketed here, so it's one plain {} chunk rather than
+    dash-joined pieces -- there's no reason to split it when nothing needs
+    an individual speed override.
+    """
     return {
         "text": "{" + "".join(entry["rpa_syllables"]) + "}",
         "phonemize_brackets": True,
         "pause_brackets": False,
-        "inline_speed": None,
     }
 
 
-def coaching_line(entry: dict, worst_syllable: int) -> str:
+def coaching_line(entry: dict, wrong_indices: set[int]) -> str:
     """Spoken, never printed alone. See the note about readable corrections."""
-    if worst_syllable is None:
+    if not wrong_indices:
         return "I did not hear anything that time."
-    ordinal = ["first", "second", "third", "fourth", "fifth"]
-    which = ordinal[worst_syllable] if worst_syllable < len(ordinal) else "last"
-    return f"The {which} syllable is the one to fix."
+    ordinal = ["first", "second", "third", "fourth", "fifth", "sixth"]
+    names = [ordinal[i] if i < len(ordinal) else "last" for i in sorted(wrong_indices)]
+    if len(names) == 1:
+        return f"The {names[0]} syllable is the one to fix."
+    return f"The {', '.join(names[:-1])} and {names[-1]} syllables need work."
