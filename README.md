@@ -41,7 +41,10 @@ Removing speech does not degrade this product, it removes it.
   user audio
       |
       v
-  wav2vec2-lv-60-espeak-cv-ft          core/asr.py
+  Whisper large-v3-turbo (HF API)      core/asr.py
+      |  word-level transcript
+      v
+  espeak-ng phonemization (local)      core/asr.py (_words_to_phones)
       |  phone sequence
       v
   weighted alignment vs reference      core/align.py
@@ -66,13 +69,13 @@ The reference side runs offline, once:
   clean recording -> Rime /phonemize -> RPA string -> data/words.json
 ```
 
-**Why two references.** The scoring reference is espeak phones, because the ASR
-model was fine-tuned on espeak-labelled data and both sides of a distance
-measurement must use one phonetic yardstick. The correction reference is Rime's
-own alphabet, because that is what Rime speaks. They are different alphabets
-doing different jobs, and no symbol-level translation table between them is
-needed: both are split into the same number of syllables in the same order, so
-"syllable 2 was wrong" indexes into either one.
+**Why two references.** The scoring reference is espeak phones, because both the
+ASR pipeline (Whisper → espeak) and the reference generation use espeak, keeping
+both sides of the distance measurement on one phonetic yardstick. The correction
+reference is Rime's own alphabet, because that is what Rime speaks. They are
+different alphabets doing different jobs, and no symbol-level translation table
+between them is needed: both are split into the same number of syllables in the
+same order, so "syllable 2 was wrong" indexes into either one.
 
 ---
 
@@ -86,7 +89,7 @@ needed: both are split into the same number of syllables in the same order, so
 | Endpoint | `https://users.rime.ai/v1/rime-tts` |
 | Audio format | WAV (`Accept: audio/wav`) |
 | Transport | HTTP POST, non-streaming |
-| ASR | `facebook/wav2vec2-lv-60-espeak-cv-ft`, local |
+| ASR | `openai/whisper-large-v3-turbo` via HuggingFace Inference API |
 | G2P | espeak-ng, local |
 
 **Why non-streaming HTTP.** Utterances are single words, and latency is not the
@@ -94,7 +97,10 @@ claim this project makes. WebSocket streaming would add reconnection and
 buffering surface for no user-visible gain.
 
 Credentials live in `.env`, server side, never in client code. `.env.example`
-ships with placeholders only.
+ships with placeholders only. Two keys are needed:
+
+* `RIME_API_KEY` — for TTS (Rime)
+* `HF_API_TOKEN` — for ASR (HuggingFace Inference API, free tier)
 
 ---
 
@@ -137,8 +143,8 @@ npm install          # terminal 2, first time only
 npm run dev          # vite on :5173, proxies /api to :8000
 ```
 
-Open `http://localhost:5173`. `server.py` loads the ASR model before it opens
-the port, so the first start takes a minute and the first scored word does not.
+Open `http://localhost:5173`. `server.py` validates the HF API token at
+startup. No local model download is needed.
 
 ### Run the Streamlit app (same core, no browser)
 
@@ -149,8 +155,6 @@ streamlit run app.py
 Both front ends call `core/coach.py` and nothing else. They render the same
 `Turn`; neither one decides which syllable was wrong. If they ever disagree,
 one of the two renderers is broken, not the pipeline.
-
-First run downloads about 1.2 GB of ASR model weights.
 
 ---
 
@@ -239,27 +243,24 @@ Permanently:
   MediaRecorder  webm/opus
         |
         v  decodeAudioData + OfflineAudioContext
-  16 kHz mono PCM WAV   ---- POST /api/attempt ---->  core/asr.py
-        |                                                  |
-        |                                            core/coach.py
-        |                                             take_turn()
-        |                                                  |
-        |                                    score -> wrong syllables
-        |                                          -> Rime payload
-        |                                                  |
-   <---- { state, wrongSyllables, audioUrl, provider } <----
-        |
-   highlight the syllables the server named
-   play the wav the server returned
+   16 kHz mono PCM WAV   ---- POST /api/attempt ---->  core/asr.py
+         |                                            (Whisper API + espeak)
+         |                                                  |
+         |                                            core/coach.py
+         |                                             take_turn()
+         |                                                  |
+         |                                    score -> wrong syllables
+         |                                          -> Rime payload
+         |                                                  |
+    <---- { state, wrongSyllables, audioUrl, provider } <----
+         |
+    highlight the syllables the server named
+    play the wav the server returned
 ```
 
 **Why the browser converts the audio.** The recorder used to upload raw
-webm/opus. `librosa` opens WAV and FLAC through `soundfile` and needs an
-external `ffmpeg` for anything else, so on a machine without ffmpeg every
-attempt failed to decode, and on a machine with it the pipeline silently
-depended on an undeclared binary. The browser already has an Opus decoder and
-a resampler, so the conversion to the exact 16 kHz mono the model wants
-happens there. `src/lib/recorder.js`.
+webm/opus. The browser already has an Opus decoder and a resampler, so the
+conversion to 16 kHz mono WAV happens there. `src/lib/recorder.js`.
 
 **Why the word bank is not bundled.** `data/words.json` is 3.3 MB. The front
 end imported it directly, which shipped the whole bank on first paint and, more
@@ -277,10 +278,33 @@ because a correction that can be read is a correction that did not need voice.
   co-articulation across word boundaries, or sentence prosody.
 * American English only. The reference is espeak `en-us` and the trap list was
   built against it.
-* The ASR runs on CPU by default. On a laptop expect roughly a second per
-  attempt after warm-up, which is inside the loop's tolerance but is not a
-  latency claim and is not measured as one.
+* ASR latency depends on HuggingFace's free inference tier. Typical response
+  is 1-3 seconds, but cold starts can be slower. The retry logic handles this.
 * Fallback behaviour: if Rime fails the app says so and offers the browser
   voice, clearly labelled as degraded. The browser voice reads the plain word
   and guesses at it, which for this word bank may reproduce the exact
   mispronunciation being corrected. It is never selected automatically.
+
+---
+
+## Changelog
+
+### ASR: local model → HuggingFace Inference API
+
+The original ASR used `facebook/wav2vec2-lv-60-espeak-cv-ft` running locally
+with PyTorch (~1.2 GB model download, 30-60s startup). This has been replaced
+with a two-step API pipeline:
+
+1. **Whisper** (`openai/whisper-large-v3-turbo`) via HuggingFace Inference API
+   transcribes audio to words
+2. **espeak-ng** (local) converts the transcript to IPA phones
+
+Benefits:
+* No local model download or PyTorch dependency for inference
+* Instant startup (token validation only)
+* `torch`, `transformers`, and `librosa` are no longer needed at runtime
+
+Trade-off: Whisper is word-level, so subtle within-word phone differences
+(e.g., a slightly off vowel that Whisper still recognizes as the correct word)
+are not caught. The errors this app targets (th/s, r/l, v/w, dropped syllables)
+all change the word Whisper hears, so they are still detected.

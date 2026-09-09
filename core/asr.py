@@ -21,7 +21,7 @@ import requests
 
 from core.phones import normalize
 
-MODEL_ID = "openai/whisper-large-v3"
+MODEL_ID = "openai/whisper-large-v3-turbo"
 SAMPLE_RATE = 16000
 
 _HF_API_TOKEN = os.environ.get("HF_API_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
@@ -39,6 +39,8 @@ def _load():
 
 def _whisper_transcribe(wav_bytes: bytes) -> str:
     """Send audio to Whisper via HF router, return the word-level transcript."""
+    import time
+
     if not _HF_API_TOKEN:
         raise RuntimeError(
             "HF_API_TOKEN is not set. Add it to your .env file. "
@@ -48,27 +50,37 @@ def _whisper_transcribe(wav_bytes: bytes) -> str:
     headers = {
         "Authorization": f"Bearer {_HF_API_TOKEN}",
         "Content-Type": "audio/wav",
+        "x-wait-for-model": "true",
     }
 
-    response = requests.post(
-        _API_URL,
-        headers=headers,
-        data=wav_bytes,
-        timeout=30,
-    )
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.post(
+                _API_URL,
+                headers=headers,
+                data=wav_bytes,
+                timeout=90,
+            )
+        except requests.exceptions.ReadTimeout:
+            if attempt < max_retries:
+                wait = 10 * attempt
+                print(f"[asr] Timeout on attempt {attempt}/{max_retries}, retrying in {wait}s...", flush=True)
+                time.sleep(wait)
+                continue
+            raise RuntimeError(
+                "HuggingFace API timed out after 3 attempts. "
+                "The Whisper model may be cold-starting — try again in a minute."
+            )
 
-    if response.status_code == 503:
-        import time
-        body = response.json()
-        wait = min(body.get("estimated_time", 20), 60)
-        print(f"[asr] Whisper model loading, waiting {wait:.0f}s...", flush=True)
-        time.sleep(wait)
-        response = requests.post(
-            _API_URL,
-            headers=headers,
-            data=wav_bytes,
-            timeout=60,
-        )
+        if response.status_code == 503:
+            body = response.json()
+            wait = min(body.get("estimated_time", 20), 60)
+            print(f"[asr] Whisper model loading, waiting {wait:.0f}s...", flush=True)
+            time.sleep(wait)
+            continue
+
+        break
 
     response.raise_for_status()
     result = response.json()
