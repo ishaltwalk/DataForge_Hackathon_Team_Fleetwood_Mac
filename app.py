@@ -36,7 +36,7 @@ st.set_page_config(page_title="Pronunciation coach", page_icon="\N{SPEAKING HEAD
 
 @st.cache_resource
 def warm_asr():
-    """Loaded once. A 1.2 GB model load inside a request wrecks the demo."""
+    """Validate the HF API token is set. No local model to load."""
     from core import asr
 
     asr._load()

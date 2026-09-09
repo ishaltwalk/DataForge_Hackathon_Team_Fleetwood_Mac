@@ -1,61 +1,117 @@
-"""Phoneme-level ASR.
+"""Phoneme-level ASR via Whisper (HF Inference API) + espeak phonemization.
 
-facebook/wav2vec2-lv-60-espeak-cv-ft transcribes audio straight into espeak
-phones, no training needed and no word-level step in between. That matters:
-a word-level transcript would tell you the learner said "sink" instead of
-"think", but not that the error was one feature away on a single phone.
+Architecture:
+  1. Audio -> Whisper (via router.huggingface.co) -> word-level transcript
+  2. Transcript -> espeak-ng (local) -> IPA phone sequence
+  3. Phone sequence -> scorer (unchanged)
 
-The model is about 1.2 GB on first use. Warm it at app start, never inside a
-request. In Streamlit wrap _load() in @st.cache_resource.
+This avoids the 1.2 GB wav2vec2 model download entirely. The trade-off is
+that word-level ASR normalizes pronunciation before we see it: if someone
+says "think" with a slightly wrong vowel, Whisper still transcribes "think"
+and espeak gives the canonical phones. Phone-level ASR would have caught
+the vowel. But the errors this app targets -- th/s, r/l, v/w, dropped
+syllables -- all change the word Whisper hears, so they are still caught.
+
+Set HF_API_TOKEN in .env with a free Hugging Face token.
 """
 
-import librosa
-import torch
-from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
+import os
+
+import requests
 
 from core.phones import normalize
 
-MODEL_ID = "facebook/wav2vec2-lv-60-espeak-cv-ft"
+MODEL_ID = "openai/whisper-large-v3"
 SAMPLE_RATE = 16000
 
-_processor = None
-_model = None
+_HF_API_TOKEN = os.environ.get("HF_API_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+_API_URL = f"https://router.huggingface.co/hf-inference/models/{MODEL_ID}"
 
 
 def _load():
-    global _processor, _model
-    if _model is None:
-        _processor = Wav2Vec2Processor.from_pretrained(MODEL_ID)
-        _model = Wav2Vec2ForCTC.from_pretrained(MODEL_ID)
-        _model.eval()
-    return _processor, _model
+    """Validate the token is set. No local model to load."""
+    if not _HF_API_TOKEN:
+        raise RuntimeError(
+            "HF_API_TOKEN is not set. Add it to your .env file. "
+            "Get a free token at https://huggingface.co/settings/tokens"
+        )
+
+
+def _whisper_transcribe(wav_bytes: bytes) -> str:
+    """Send audio to Whisper via HF router, return the word-level transcript."""
+    if not _HF_API_TOKEN:
+        raise RuntimeError(
+            "HF_API_TOKEN is not set. Add it to your .env file. "
+            "Get a free token at https://huggingface.co/settings/tokens"
+        )
+
+    headers = {
+        "Authorization": f"Bearer {_HF_API_TOKEN}",
+        "Content-Type": "audio/wav",
+    }
+
+    response = requests.post(
+        _API_URL,
+        headers=headers,
+        data=wav_bytes,
+        timeout=30,
+    )
+
+    if response.status_code == 503:
+        import time
+        body = response.json()
+        wait = min(body.get("estimated_time", 20), 60)
+        print(f"[asr] Whisper model loading, waiting {wait:.0f}s...", flush=True)
+        time.sleep(wait)
+        response = requests.post(
+            _API_URL,
+            headers=headers,
+            data=wav_bytes,
+            timeout=60,
+        )
+
+    response.raise_for_status()
+    result = response.json()
+
+    if isinstance(result, dict):
+        return result.get("text", "").strip()
+    if isinstance(result, list) and result:
+        return result[0].get("text", "").strip()
+    return ""
+
+
+def _words_to_phones(text: str) -> list[str]:
+    """Convert a word-level transcript to IPA phones using espeak-ng.
+
+    Uses the phonemizer library (already a project dependency) which wraps
+    espeak-ng -- the same engine that generated the reference phones in
+    data/words.json. This keeps both sides of the comparison on the same
+    phonetic yardstick.
+    """
+    if not text:
+        return []
+
+    from phonemizer import phonemize
+
+    raw = phonemize(
+        text.lower(),
+        language="en-us",
+        backend="espeak",
+        strip=True,
+        with_stress=False,
+        preserve_punctuation=False,
+    )
+    return normalize(raw)
 
 
 def transcribe(wav_path: str) -> list[str]:
     """Audio file -> list of phone segments, same inventory as the reference."""
-    processor, model = _load()
-
-    # Resampled to 16 kHz mono regardless of what the recorder produced. An
-    # 8 kHz phone-quality input degrades this model badly, and the failure
-    # looks like bad pronunciation rather than bad audio.
-    audio, _ = librosa.load(wav_path, sr=SAMPLE_RATE, mono=True)
-
-    inputs = processor(audio, sampling_rate=SAMPLE_RATE, return_tensors="pt")
-    with torch.no_grad():
-        logits = model(inputs.input_values).logits
-    ids = torch.argmax(logits, dim=-1)
-    raw = processor.batch_decode(ids)[0]
-    return normalize(raw)
+    with open(wav_path, "rb") as f:
+        return transcribe_bytes(f.read())
 
 
 def transcribe_bytes(wav_bytes: bytes) -> list[str]:
     """Same, for audio held in memory (Streamlit's recorder returns bytes)."""
-    import io
-
-    processor, model = _load()
-    audio, _ = librosa.load(io.BytesIO(wav_bytes), sr=SAMPLE_RATE, mono=True)
-    inputs = processor(audio, sampling_rate=SAMPLE_RATE, return_tensors="pt")
-    with torch.no_grad():
-        logits = model(inputs.input_values).logits
-    ids = torch.argmax(logits, dim=-1)
-    return normalize(processor.batch_decode(ids)[0])
+    transcript = _whisper_transcribe(wav_bytes)
+    print(f"[asr] Whisper heard: {transcript!r}", flush=True)
+    return _words_to_phones(transcript)

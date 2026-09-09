@@ -303,12 +303,8 @@ def inspect_upload(raw: bytes) -> None:
 def warm() -> None:
     load_bank()
     print(f"word bank loaded: {len(_bank)} entries")
-    if os.environ.get("SKIP_ASR_WARM"):
-        print("SKIP_ASR_WARM set, model will load on first attempt")
-        return
-    print("loading wav2vec2 phoneme model, this takes a minute on first run...")
-    asr._load()
-    print("asr ready")
+    asr._load()  # validates HF_API_TOKEN is set
+    print(f"asr ready (HF Inference API: {asr.MODEL_ID})")
 
 
 if __name__ == "__main__":
