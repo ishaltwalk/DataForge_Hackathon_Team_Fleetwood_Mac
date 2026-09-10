@@ -1,21 +1,3 @@
-"""Pronunciation coach, Streamlit build.
-
-A second front end over the same core, kept because it is the fastest way to
-reproduce a scoring result without a browser, and judges asked to reproduce
-behaviour will reach for it. It renders core.coach.take_turn and decides
-nothing on its own; if this file and the React app ever disagree about which
-syllable was wrong, that is a bug in one of the two renderers, not a
-difference of opinion between two pipelines.
-
-Two things on screen are requirements rather than decoration:
-
-  * the active provider line, because fallback behavior has to be observable
-  * corrections as audio only, never as readable IPA, because if the fix can be
-    read then removing the voice leaves the product intact
-
-Run:  streamlit run app.py
-"""
-
 import json
 from pathlib import Path
 
@@ -36,7 +18,6 @@ st.set_page_config(page_title="Pronunciation coach", page_icon="\N{SPEAKING HEAD
 
 @st.cache_resource
 def warm_asr():
-    """Validate the HF API token is set. No local model to load."""
     from core import asr
 
     asr._load()
@@ -51,8 +32,6 @@ def load_bank():
 
 
 def play(spoken, label):
-    """Audio if Rime answered, a disclosed failure if it did not. Never a
-    silent substitution: see core/speech.py."""
     if spoken is None:
         return
     if spoken.ok:
@@ -68,7 +47,6 @@ by_id = {e["id"]: e for e in bank}
 st.title("Pronunciation coach")
 st.caption(f"Speech: {CONFIG_LINE}")
 
-# 5000 entries in a selectbox is slow and unusable. Filter first.
 query = st.text_input("Find a word", "")
 ids = [e["id"] for e in bank if query.lower() in e["id"]][:200]
 if not ids:
@@ -83,8 +61,6 @@ if st.session_state.get("word") != word_id:
     st.session_state["session"] = session.Session(entry)
 
 sess = st.session_state["session"]
-
-st.write(f"Trap: {entry['trap']}")
 
 if st.button("Hear it"):
     play(coach.prompt(entry), "Model pronunciation")

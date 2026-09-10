@@ -1,34 +1,3 @@
-"""HTTP API for the React front end.
-
-    python server.py            dev, port 8000
-
-Vite proxies /api to this process (see vite.config.js), so the browser talks
-to one origin and there is no CORS in the shipped path. CORS is still enabled
-for localhost origins so the front end can be run standalone.
-
-Notes on things that were wrong before and are load bearing now:
-
-WORD BANK OVER THE WIRE. data/words.json is 3.3 MB. The front end used to
-import it directly into the bundle, which meant every page load shipped the
-whole bank AND the browser copy could drift from the one the server scores
-against. /api/words now returns a light index the server filters, and
-/api/words/<id> returns the full entry. One source of truth.
-
-SESSIONS. The attempt loop is per learner per word. Keying it on word_id
-alone, as the first version did, meant two people practising the same word
-shared a give-up counter. Key is (client_id, word_id) now, client_id being an
-opaque id the browser generates and sends. The store is capped: this is a demo
-server, not a database, and an unbounded dict is how a demo server dies.
-
-ASR WARMTH. This used to load a 1.2 GB wav2vec2 checkpoint, and loading it
-inside the first /api/attempt added a minute to the first scored word, which
-in a four minute demo is the whole demo. ASR is a hosted call now
-(core/asr.py, Whisper via the HuggingFace Inference API) so there is nothing
-to download, but warm() still runs before the port opens: it validates the
-bank and the HF token there instead of failing on the first attempt of a live
-demo. A missing token is a startup error now, not a mid-demo 500.
-"""
-
 import base64
 import json
 import os
@@ -67,8 +36,6 @@ def load_bank() -> list[dict]:
     global _bank
     if _bank is None:
         bank = json.loads(BANK_PATH.read_text(encoding="utf-8"))
-        # Fail at load, not mid demo. validate_bank catches the IPA/RPA
-        # syllable mismatch that makes the app correct the wrong syllable.
         validate_bank(bank)
         _bank = bank
         _by_id.clear()
@@ -94,8 +61,6 @@ def get_session(client_id: str, word_id: str, entry: dict) -> Session:
 
 
 def clear_session(client_id: str, word_id: str) -> None:
-    """After a pass or a give-up the word is done. The next attempt on it is a
-    fresh loop, not attempt five of the old one."""
     _sessions.pop((client_id, word_id), None)
 
 
@@ -108,9 +73,6 @@ def data_url(audio: bytes) -> str:
 
 
 def speech_fields(spoken) -> dict:
-    """Provider is reported on every response that could have spoken, even
-    when it did not. A missing field reads as 'unknown', which is exactly what
-    the observability rule forbids."""
     if spoken is None:
         return {"audioUrl": None, "provider": None, "providerError": None}
     return {
@@ -121,9 +83,6 @@ def speech_fields(spoken) -> dict:
 
 
 def summarize(entry: dict) -> dict:
-    """List view. Deliberately excludes ipa_syllables and rpa_syllables: the
-    correction must not be readable on screen, and shipping the RPA to the
-    browser is how it accidentally becomes readable."""
     return {
         "id": entry["id"],
         "display": entry["display"],
@@ -136,7 +95,6 @@ def summarize(entry: dict) -> dict:
 
 @app.get("/api/config")
 def get_config():
-    """What the demo has to be able to state out loud."""
     load_bank()
     return jsonify(
         {
@@ -156,8 +114,6 @@ def get_config():
 
 @app.get("/api/words")
 def get_words():
-    """Filtered server side. q matches a prefix first, then a substring, so
-    typing 'th' surfaces 'think' before 'anything'."""
     bank = load_bank()
     q = (request.args.get("q") or "").strip().lower()
     try:
@@ -181,8 +137,6 @@ def get_word(word_id):
     if entry is None:
         return jsonify({"error": "unknown word id"}), 404
     detail = summarize(entry)
-    # The IPA is shown as a target, which is fine: it is the thing being
-    # attempted, not the correction. The RPA is never sent.
     detail["ipaSyllables"] = ["".join(s) for s in entry["ipa_syllables"]]
     return jsonify(detail)
 
@@ -197,7 +151,6 @@ def get_prompt(word_id):
 
 @app.post("/api/attempt")
 def submit_attempt():
-    """multipart form: audio file + word_id (+ client_id if no header)."""
     word_id = request.form.get("word_id")
     audio_file = request.files.get("audio")
     if not word_id or audio_file is None:
@@ -218,20 +171,12 @@ def submit_attempt():
 
     try:
         heard = asr.transcribe_bytes(raw)
-        # Logged on every attempt, not behind a debug flag. When a learner
-        # says "it cannot hear me", the only two questions are whether audio
-        # arrived and what the model made of it, and both answers are here.
-        # A silent upload and a decoded-but-unrecognised one look identical
-        # in the UI and need completely different fixes.
         print(
             f"[attempt] word={word_id} bytes={len(raw)} "
             f"phones={len(heard)} heard={''.join(heard) or '(nothing)'}",
             flush=True,
         )
     except Exception as exc:
-        # Almost always a decode failure: the browser sent a container the
-        # server cannot open. The front end converts to 16 kHz mono WAV before
-        # upload precisely so this stays rare, but say so plainly if it fires.
         return jsonify({"error": f"could not decode the recording: {exc}"}), 415
 
     turn = coach.take_turn(entry, heard, sess)
@@ -266,18 +211,6 @@ def too_large(_exc):
 
 
 def inspect_upload(raw: bytes) -> None:
-    """Measure the audio the server actually received, and keep a copy.
-
-    A byte count only proves that SOMETHING arrived. It cannot tell a real
-    recording from 2.6 seconds of a muted microphone, because the wav is
-    fixed-rate: silence and speech occupy identical space. Peak and RMS
-    separate them in one line, and the saved file lets you listen to exactly
-    what the model was given rather than to what you think you said.
-
-    Peak near 0.0 means the capture is silent and no amount of model tuning
-    will help. Peak near 1.0 with everything clipped is the opposite problem.
-    Healthy speech sits around 0.1 to 0.7.
-    """
     try:
         import io
 
@@ -307,12 +240,10 @@ def inspect_upload(raw: bytes) -> None:
 def warm() -> None:
     load_bank()
     print(f"word bank loaded: {len(_bank)} entries")
-    asr._load()  # validates HF_API_TOKEN is set
+    asr._load()
     print(f"asr ready (HF Inference API: {asr.MODEL_ID})")
 
 
 if __name__ == "__main__":
     warm()
-    # debug=False: the reloader runs warm() twice and doubles the startup
-    # token/bank checks for no benefit.
     app.run(port=8000, debug=False)

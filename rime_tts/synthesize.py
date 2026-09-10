@@ -1,34 +1,3 @@
-"""Rime text to speech. The only speech path in the judged flow.
-
-Merged from two branches. Three things changed and each fixed a real failure:
-
-  * The key is read at CALL time, not import time. Reading it at import made
-    `import rime_tts.synthesize` raise KeyError on any machine without the
-    variable set, which took down the whole Flask app including the routes
-    that never speak.
-  * synthesize() returns BYTES. It used to write to a fixed output path, so
-    two overlapping requests wrote the same file and one user could hear the
-    other user's correction. Callers that want a file use save().
-  * Failures raise RimeError instead of leaking urllib exceptions, so the
-    caller can label the active provider honestly when Rime is down.
-
-Config used in the judged flow, kept in one place because the README and
-RIME_EVIDENCE.md both have to state it exactly:
-
-    endpoint  https://users.rime.ai/v1/rime-tts   (POST, JSON, non-streaming)
-    modelId   mistv3
-    speaker   falcon
-    language  eng
-    audio     audio/wav
-    transport HTTPS request/response, played back as a data URL
-
-Bracket controls, all three of which the correction depends on:
-
-    phonemizeBetweenBrackets   {rpa} is spoken as those exact phones
-    inlineSpeedAlpha           [chunk] is slowed, one value per bracketed span
-    pauseBetweenBrackets       <300> gaps. Off by default, see core/correct.py
-"""
-
 import json
 import os
 import urllib.error
@@ -45,7 +14,7 @@ TIMEOUT_SECONDS = 20
 
 
 class RimeError(RuntimeError):
-    """Rime did not return audio. Carries enough detail to show a user."""
+    pass
 
 
 def api_key() -> str:
@@ -66,14 +35,6 @@ def build_payload(
     pause_brackets: bool = False,
     inline_speed: str | None = None,
 ) -> dict:
-    """Separated from the network call so tests can assert on it offline.
-
-    tests/test_payload.py checks the two rules that are easy to get wrong and
-    impossible to notice by ear on a good clip:
-      * phonemizeBetweenBrackets goes on whenever {} is present, even if the
-        caller forgot to ask for it
-      * inlineSpeedAlpha carries one value per bracketed span
-    """
     payload_text = "{" + rpa + "}" if rpa else text
 
     payload: dict = {
@@ -101,7 +62,6 @@ def synthesize(
     pause_brackets: bool = False,
     inline_speed: str | None = None,
 ) -> bytes:
-    """Text (or an RPA string) to WAV bytes. Raises RimeError on any failure."""
     payload = build_payload(
         text,
         speaker=speaker,
@@ -131,8 +91,6 @@ def synthesize(
     except Exception as exc:
         raise RimeError(f"Could not reach Rime: {exc}") from exc
 
-    # A JSON error body served with a 200 is not audio. Catch it here rather
-    # than letting the browser fail to decode a 40 byte "wav".
     if not audio.startswith(b"RIFF"):
         raise RimeError(
             "Rime response was not WAV audio: "
@@ -143,7 +101,6 @@ def synthesize(
 
 
 def save(audio: bytes, output_path: str) -> str:
-    """Write bytes to disk. Used by the offline scripts, not by the server."""
     with open(output_path, "wb") as f:
         f.write(audio)
     return output_path

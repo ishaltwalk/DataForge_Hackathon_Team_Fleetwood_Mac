@@ -1,10 +1,3 @@
-
-/*
- * Field names match the server's summarize(): `display`, not `word`, and
- * `difficultyScore`, not the `difficulty` array. The old card read item.word
- * and item.difficulty, so every tile rendered blank with an [object Object]
- * badge. Anything shown here has to exist in /api/words.
- */
 export default function WordCard({ item, onSelect }) {
   const hard = item.difficultyScore >= 3;
   return (
@@ -24,7 +17,6 @@ export default function WordCard({ item, onSelect }) {
           {item.syllableCount} syl
         </span>
       </div>
-      <p className="text-xs text-stone-500 mt-1.5 line-clamp-2">{item.trap}</p>
     </button>
   );
 }

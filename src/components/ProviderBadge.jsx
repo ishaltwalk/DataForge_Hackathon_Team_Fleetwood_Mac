@@ -1,9 +1,3 @@
-
-/*
- * Required by the brief, not cosmetic: the active speech provider has to be
- * observable and any fallback disclosed. Three states, and the third is the
- * one that matters, because a silent downgrade is exactly what this forbids.
- */
 export default function ProviderBadge({ provider }) {
   const styles = {
     rime: 'bg-emerald-100 text-emerald-800 border-emerald-200',

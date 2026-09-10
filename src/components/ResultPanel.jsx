@@ -1,14 +1,5 @@
 import { useState } from 'react';
 
-/*
- * Renders one scored attempt. Every number here comes from the server; the
- * panel does no arithmetic, because a score computed twice is a score that
- * eventually disagrees with itself.
- *
- * The phone-level diff sits behind a toggle rather than on the page. It is
- * genuinely useful when reproducing a result, and genuinely confusing to a
- * learner who is being told to listen, not to read.
- */
 export default function ResultPanel({ attempt, onReplay }) {
   const [showDiff, setShowDiff] = useState(false);
   if (!attempt) return null;
