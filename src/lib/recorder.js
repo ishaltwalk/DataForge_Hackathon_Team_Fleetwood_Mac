@@ -60,7 +60,19 @@ export function createRecorder() {
           activeStream?.getTracks().forEach((t) => t.stop());
           try {
             const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-            resolve(await toWav16k(blob));
+            // Both sizes, because they fail differently. A zero-byte captured
+            // blob is a microphone problem. A healthy capture that produces a
+            // tiny wav is a conversion problem. Guessing between those two
+            // wastes more time than one console line costs.
+            const wav = await toWav16k(blob);
+            console.log(
+              `[recorder] captured ${blob.size} bytes (${recorder.mimeType}), ` +
+                `converted to ${wav.size} bytes of 16 kHz wav`,
+            );
+            if (blob.size === 0) {
+              throw new Error('The microphone produced no audio at all.');
+            }
+            resolve(wav);
           } catch (err) {
             reject(err);
           }
