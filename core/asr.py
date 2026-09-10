@@ -12,10 +12,24 @@ and espeak gives the canonical phones. Phone-level ASR would have caught
 the vowel. But the errors this app targets -- th/s, r/l, v/w, dropped
 syllables -- all change the word Whisper hears, so they are still caught.
 
+LANGUAGE CANNOT BE PINNED HERE. Whisper itself supports task="transcribe"
+and language="en", but those are Transformers-level generation controls. The
+Inference Providers router this module posts to accepts audio bytes and
+nothing else; sending them as parameters comes back as an unexpected keyword
+argument. So Whisper auto-detects the language on every request.
+
+That matters because the input this app sends is, by design, badly
+mispronounced English. That is exactly the input that makes auto-detection
+guess wrong, and a wrong guess comes back as another script or a
+translation. Phonemizing that as en-us produces a phone sequence that has
+nothing to do with what was said, and the scorer then blames a syllable for
+it. _looks_english() below rejects those before they reach the scorer.
+
 Set HF_API_TOKEN in .env with a free Hugging Face token.
 """
 
 import os
+import re
 
 import requests
 
@@ -26,6 +40,8 @@ SAMPLE_RATE = 16000
 
 _HF_API_TOKEN = os.environ.get("HF_API_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
 _API_URL = f"https://router.huggingface.co/hf-inference/models/{MODEL_ID}"
+
+_LATIN = re.compile(r"[A-Za-z]")
 
 
 def _load():
@@ -122,8 +138,35 @@ def transcribe(wav_path: str) -> list[str]:
         return transcribe_bytes(f.read())
 
 
+def _looks_english(text: str) -> bool:
+    """Reject a transcript that is not an attempt at an English word.
+
+    Deliberately crude: one Latin letter is enough. The job is to catch the
+    detection failures (Cyrillic, CJK, Arabic script, a translated sentence in
+    another alphabet), not to police spelling. Anything stricter would start
+    rejecting real attempts, and a learner being told they said nothing when
+    they did is a worse failure than a rare bad transcript getting through.
+
+    An empty transcript is already handled upstream and is not this check's
+    business.
+    """
+    return bool(_LATIN.search(text))
+
+
 def transcribe_bytes(wav_bytes: bytes) -> list[str]:
     """Same, for audio held in memory (Streamlit's recorder returns bytes)."""
     transcript = _whisper_transcribe(wav_bytes)
     print(f"[asr] Whisper heard: {transcript!r}", flush=True)
+
+    if transcript and not _looks_english(transcript):
+        # Returning [] routes this into the existing no_speech branch, which
+        # does not consume a retry. That is the honest classification: the
+        # recogniser failed, the learner did not. Charging them an attempt for
+        # a language-detection miss would be punishing them for our stack.
+        print(
+            f"[asr] transcript is not English, treating as no speech: {transcript!r}",
+            flush=True,
+        )
+        return []
+
     return _words_to_phones(transcript)
