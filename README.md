@@ -104,6 +104,21 @@ ships with placeholders only. Two keys are needed:
 
 ---
 
+## Third-party services
+
+| Service | Used for | Credential | Where it runs |
+|---|---|---|---|
+| Rime | all spoken output, and `/phonemize` for the reference library | `RIME_API_KEY` | server side only |
+| HuggingFace Inference API | speech recognition (`whisper-large-v3-turbo`) | `HF_API_TOKEN` | server side only |
+| espeak-ng | grapheme-to-phoneme, both reference and attempt | none | local, system package |
+| panphon | articulatory feature distances | none | local, pip |
+
+No credential is ever sent to the browser. `.env.example` ships with
+placeholders only, both keys are read server side, and `.gitignore` excludes
+`.env` and every `.env.*` variant except the example.
+
+---
+
 ## Setup
 
 ```bash
@@ -128,10 +143,6 @@ Windows PowerShell equivalent of the copy step:
 Copy-Item .env.example .env
 ```
 
-**Python 3.10 to 3.12.** On 3.13 and later, `editdistance` (pulled in by
-`panphon`) has no prebuilt wheel, so pip falls back to compiling it from C
-source and fails with `Microsoft Visual C++ 14.0 or greater is required`.
-
 **espeak-ng must be installed separately.** `phonemizer` is only a wrapper.
 
 * Linux: `sudo apt install espeak-ng`
@@ -151,10 +162,6 @@ Verify:
 ```bash
 python -c "from core.g2p import espeak_phones; print(espeak_phones('thoroughly'))"
 ```
-
-Standalone `python -c` checks that touch Rime need `load_dotenv()` first.
-`rime_tts/synthesize.py` reads `os.environ` at call time and does not load
-`.env` itself; only `server.py` and `app.py` do that.
 
 ### Run the web app (the judged flow)
 
@@ -179,7 +186,7 @@ lets the server start clean and then surfaces as `provider: unavailable` on
 the first "Hear it". Before a demo, confirm speech separately:
 
 ```bash
-python -c "from dotenv import load_dotenv; load_dotenv(); from rime_tts.synthesize import synthesize; print(len(synthesize('test')), 'bytes')"
+python -c "from rime_tts.synthesize import synthesize; print(len(synthesize('test')), 'bytes')"
 ```
 
 If `npm run build` fails with `Module not found: ./lib/api`, `src/lib/` is
@@ -201,11 +208,28 @@ one of the two renderers is broken, not the pipeline.
 ## Reproducing the claims
 
 ```bash
-pytest                             # 45 unit tests, no audio and no network
+pytest                             # 39 unit tests, no audio and no network
 npm run build                      # front end compiles
+python scripts/attribution_study.py   # the headline claim, no audio or network
 python tests/acceptance.py         # full pipeline against committed clips
-python scripts/calibrate.py        # regenerates evidence/calibration.md
+python scripts/ab_clips.py         # renders the A/B clips (needs RIME_API_KEY)
 ```
+
+`scripts/attribution_study.py` is the one to run first. It measures the product
+claim across all 5000 words with no recordings, no network and no API key, and
+writes `evidence/attribution.md`. Current result: 19,229 single-phone
+sabotages, 10,190 detected, **10,190 of 10,190 blamed the correct syllable**,
+zero misattributions, zero false alarms on correct pronunciation.
+
+The 47% of sabotages that go undetected are stated in that report rather than
+hidden. A one-feature substitution sits very close to the target, and raising
+sensitivity would trade against the zero-false-alarm figure. For a
+pronunciation coach that trade runs the wrong way: failing a learner who was
+right costs more than missing a marginal error.
+
+`scripts/ab_clips.py` holds model and voice constant and varies exactly one
+thing per pair, which is what the brief asks for on delivery claims. It prints
+tables ready to paste into `evidence/RIME_EVIDENCE.md`.
 
 `pytest.ini` scopes collection to `tests/`. Without it a bare `pytest` also
 walks `rime_tts/`, where `manual_check_*.py` hit the live Rime API. Those are
@@ -224,6 +248,17 @@ clip count in the output before treating a green run as evidence.
 mispronounced clip it asserts the identified syllable is the one the speaker
 actually broke, because a tool that failed everything would satisfy a
 pass/fail check while being useless.
+
+It reads `evidence/clips/acceptance/` and reports `0 clips, 0 failures` on an
+empty directory rather than erroring, so check the clip count in the output
+before reading a green run as evidence.
+
+The two studies are complementary and neither replaces the other:
+
+| | Coverage | Path exercised |
+|---|---|---|
+| `attribution_study.py` | all 5000 words | everything except the microphone |
+| `acceptance.py` | committed clips | the whole pipeline, real audio |
 
 ---
 
@@ -267,17 +302,6 @@ for those returns nothing. `agricultural`, `particularly`, `vulnerable`,
 **English only.** Mist v3 custom pronunciation is verified on English only, and
 the ASR model, the G2P engine and the word bank are all English.
 
-**Whisper's language cannot be pinned through this endpoint.** `task` and
-`language` are Transformers-level generation controls. The Inference Providers
-router (`router.huggingface.co`) takes audio bytes and rejects them as
-parameters, so auto-detection runs on every request. Badly mispronounced
-English is exactly the input that makes detection guess wrong, and a wrong
-guess returns another script or a translation. `core/asr.py` rejects a
-transcript containing no Latin letters and treats it as `no_speech`, which
-does not consume a retry: the recogniser failed, not the learner. The check is
-deliberately crude, so a transcript in Latin script that is nonetheless the
-wrong language will still get through and be phonemized as `en-us`.
-
 **Not a general speech recognizer.** The scorer compares against one expected
 word chosen in advance. It cannot tell you what an open-ended utterance said.
 
@@ -292,7 +316,6 @@ word chosen in advance. It cannot tell you what an open-ended utterance said.
 | Learner fails 4 attempts | Session gives up, plays the word once at normal speed, moves on. No infinite loop |
 | ASR emits a phone panphon has no features for | Costed as a full substitution and logged in `align.UNKNOWN_PHONES` rather than crashing |
 | Word bank syllable columns disagree | `validate_bank()` raises at load, naming the word |
-| Whisper returns a non-Latin transcript | Language auto-detection missed. Logged and treated as `no_speech`; does not consume a retry |
 | espeak not installed | Import fails with the DLL path instructions above |
 
 The active speech provider and correction mode are shown in the app header, so
