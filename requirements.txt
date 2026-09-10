@@ -1,14 +1,18 @@
-# Runtime
+# Runtime, web app and Streamlit app
 streamlit>=1.40
 flask>=3.0
 flask-cors>=4.0
 python-dotenv
 requests
-librosa
 soundfile
 numpy
 
-# Reference building (offline, scripts/ only)
+# Runtime, scoring pipeline.
+# phonemizer wraps espeak-ng and is called on every attempt by
+# core/asr.py (_words_to_phones). panphon supplies the articulatory feature
+# table core/align.py scores with, and core/phones.py imports it at module
+# load. Neither is offline-only: the app does not start without them.
+# espeak-ng itself is a system package, not a pip package. See README.
 phonemizer
 panphon
 

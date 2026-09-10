@@ -110,7 +110,22 @@ ships with placeholders only. Two keys are needed:
 git clone <repo>
 cd <repo>
 pip install -r requirements.txt
-cp .env.example .env      # then put your real key in .env
+cp .env.example .env      # then put your real keys in .env
+```
+
+`.env` needs BOTH keys before anything runs. `server.py` validates them at
+startup rather than on the first attempt, so a missing key is a refusal to
+boot, not a 500 halfway through a demo:
+
+```
+RIME_API_KEY=...          # TTS
+HF_API_TOKEN=...          # ASR, free tier at huggingface.co/settings/tokens
+```
+
+Windows PowerShell equivalent of the copy step:
+
+```powershell
+Copy-Item .env.example .env
 ```
 
 **espeak-ng must be installed separately.** `phonemizer` is only a wrapper.
@@ -138,13 +153,30 @@ python -c "from core.g2p import espeak_phones; print(espeak_phones('thoroughly')
 Two processes.
 
 ```bash
+npm install          # once, before anything else
+
 python server.py     # terminal 1, scoring API on :8000
-npm install          # terminal 2, first time only
-npm run dev          # vite on :5173, proxies /api to :8000
+npm run dev          # terminal 2, vite on :5173, proxies /api to :8000
 ```
 
-Open `http://localhost:5173`. `server.py` validates the HF API token at
-startup. No local model download is needed.
+Open `http://localhost:5173`. Start `server.py` first: vite proxies `/api` to
+`:8000` and the front end fetches `/api/config` on mount, so a cold vite with
+no server behind it shows the "cannot reach the scoring server" banner.
+
+`server.py` validates the word bank and `HF_API_TOKEN` before the port opens.
+It does NOT check `RIME_API_KEY`: that key is read at call time in
+`rime_tts/synthesize.py`, deliberately, so importing the module cannot take
+down routes that never speak. The cost is that a missing or expired Rime key
+lets the server start clean and then surfaces as `provider: unavailable` on
+the first "Hear it". Before a demo, confirm speech separately:
+
+```bash
+python -c "from rime_tts.synthesize import synthesize; print(len(synthesize('test')), 'bytes')"
+```
+
+If `npm run build` fails with `Module not found: ./lib/api`, `src/lib/` is
+missing from your checkout. See the note in `.gitignore` about anchoring
+`/lib/`; an unanchored `lib/` matches at any depth and excludes it silently.
 
 ### Run the Streamlit app (same core, no browser)
 
@@ -162,9 +194,23 @@ one of the two renderers is broken, not the pipeline.
 
 ```bash
 pytest                             # 39 unit tests, no audio and no network
+npm run build                      # front end compiles
 python tests/acceptance.py         # full pipeline against committed clips
 python scripts/calibrate.py        # regenerates evidence/calibration.md
 ```
+
+`pytest.ini` scopes collection to `tests/`. Without it a bare `pytest` also
+walks `rime_tts/`, where `manual_check_*.py` hit the live Rime API. Those are
+manual checks and are meant to be run by name, not collected:
+
+```bash
+python -m rime_tts.manual_check_synthesize    # spends Rime credit
+python -m rime_tts.manual_check_phonemize     # spends Rime credit
+```
+
+`tests/acceptance.py` reads `evidence/clips/acceptance/`. It reports
+`0 clips, 0 failures` on an empty directory rather than erroring, so check the
+clip count in the output before treating a green run as evidence.
 
 `tests/acceptance.py` asserts more than pass/fail. On a deliberately
 mispronounced clip it asserts the identified syllable is the one the speaker
@@ -181,9 +227,12 @@ by live testing, all three noted here because a judge may read the docs.
 1. The custom pronunciation page states Mist v3 does not support custom
    pronunciation. It does, on English Mist v3, verified live.
 2. Combining `phonemizeBetweenBrackets` with `pauseBetweenBrackets` in one
-   request is not documented. It works, and syllable isolation depends on it.
+   request is not documented. It works, but the pauses made the correction
+   sound worse and `pauseBetweenBrackets` is off in the judged flow.
 3. Nesting `inlineSpeedAlpha` brackets around a phonemized chunk
-   (`[{t0xm}]`) is not documented either way. See failure behavior below.
+   (`[{t0xm}]`) is not documented either way. It works: the chunk is both
+   phonemized and slowed. Verified live on `agricultural`, `culture` and
+   `picture`. The whole correction shape depends on it.
 
 **Articulatory distance underweights perceptually critical contrasts.** `θ`
 and `s` differ in few features, so `th -> s` scores as a small error even
@@ -201,6 +250,12 @@ word added later must be checked the same way.
 syllable's length in `ipa_syllables` is a segment count. Consistent on both
 sides, but it surprises people reading the word bank.
 
+**Not every famous trap word is in the bank.** The 5000 entries are what
+survived the espeak audit described above, and several words people reach for
+first did not: `squirrel`, `rural`, `clothes`, `February`, `colonel`. Searching
+for those returns nothing. `agricultural`, `particularly`, `vulnerable`,
+`thoroughly`, `phenomenon` and `culture` are all present and all demo well.
+
 **English only.** Mist v3 custom pronunciation is verified on English only, and
 the ASR model, the G2P engine and the word bank are all English.
 
@@ -214,7 +269,7 @@ word chosen in advance. It cannot tell you what an open-ended utterance said.
 | Failure | Behavior |
 |---|---|
 | No speech, or a clip under 2 phones | Reported as "I did not hear anything", not scored. Does not consume a retry |
-| `[{ }]` speed nesting unsupported | `NEST_SPEED_IN_PHONEME = False` in `core/correct.py`. Syllable isolation still works, speed applies to the whole utterance instead |
+| `[{ }]` speed nesting | Verified working live, so it is used unconditionally. If a future Rime build breaks it, the correction still plays every syllable as its own `{rpa}` chunk and only the per-syllable slowdown is lost. See the revision note at the top of `core/correct.py` |
 | Learner fails 4 attempts | Session gives up, plays the word once at normal speed, moves on. No infinite loop |
 | ASR emits a phone panphon has no features for | Costed as a full substitution and logged in `align.UNKNOWN_PHONES` rather than crashing |
 | Word bank syllable columns disagree | `validate_bank()` raises at load, naming the word |
@@ -269,7 +324,7 @@ server scores against. `/api/words` filters server side; `/api/words/<id>`
 returns one entry. The `rpa_syllables` are never sent to the browser at all,
 because a correction that can be read is a correction that did not need voice.
 
-## Known limitations
+## Known limitations, web app
 
 * Sessions are in-memory and capped at 500, keyed by `(client_id, word_id)`.
   Restarting the server clears every attempt counter. Fine for a demo, not a

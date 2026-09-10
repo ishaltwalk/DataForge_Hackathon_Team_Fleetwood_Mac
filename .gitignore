@@ -17,21 +17,27 @@ credentials.json
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
+.installed.cfg
+
+# Python build/packaging output.
+# NOTE: these are anchored with a leading slash on purpose. An unanchored
+# "lib/" matches at ANY depth, which is how src/lib/ (the front end's api.js
+# and recorder.js) was silently excluded from every commit and the React app
+# would not build from a fresh clone. Do not remove the slashes.
+/build/
+/develop-eggs/
+/dist/
+/downloads/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 
 # Virtual environments
 env/
@@ -64,7 +70,18 @@ htmlcov/
 audio_output/
 generated_clips/
 recordings/
-# Exception: keep test fixtures if needed
+
+# Written by server.py inspect_upload() on every attempt. Local debug aid,
+# and it contains a recording of whoever last used the machine.
+debug_last_attempt.wav
+
+# Scratch output from rime_tts/manual_check_*.py
+output.wav
+ref_rhyme.wav
+round_trip.wav
+
+# Exception: evidence clips ARE the acceptance fixtures and must be committed.
+!evidence/clips/**
 !fixtures/**/*.wav
 !fixtures/**/*.mp3
 
@@ -83,6 +100,13 @@ out/
 .vite/
 *.tsbuildinfo
 .eslintcache
+
+# ==========================
+# Agent / editor scaffolding
+# ==========================
+# .agents/skills/* was a symlink into .venv on one Windows machine. It is
+# broken on every other clone.
+.agents/
 
 # ==========================
 # Logs & System Cache
@@ -109,12 +133,3 @@ desktop.ini
 *.bak
 coverage/
 .nyc_output/
-*.wav
-!evidence/clips/**
-
-.venv/
-
-dist/
-.pytest_cache/
-
-node_modules/

@@ -20,9 +20,13 @@ shared a give-up counter. Key is (client_id, word_id) now, client_id being an
 opaque id the browser generates and sends. The store is capped: this is a demo
 server, not a database, and an unbounded dict is how a demo server dies.
 
-ASR WARMTH. The wav2vec2 model is about 1.2 GB. Loading it inside the first
-/api/attempt adds a minute to the first scored word, which in a four minute
-demo is the whole demo. It is warmed at startup, before the port opens.
+ASR WARMTH. This used to load a 1.2 GB wav2vec2 checkpoint, and loading it
+inside the first /api/attempt added a minute to the first scored word, which
+in a four minute demo is the whole demo. ASR is a hosted call now
+(core/asr.py, Whisper via the HuggingFace Inference API) so there is nothing
+to download, but warm() still runs before the port opens: it validates the
+bank and the HF token there instead of failing on the first attempt of a live
+demo. A missing token is a startup error now, not a mid-demo 500.
 """
 
 import base64
@@ -309,5 +313,6 @@ def warm() -> None:
 
 if __name__ == "__main__":
     warm()
-    # debug=False: the reloader loads the 1.2 GB model twice.
+    # debug=False: the reloader runs warm() twice and doubles the startup
+    # token/bank checks for no benefit.
     app.run(port=8000, debug=False)
